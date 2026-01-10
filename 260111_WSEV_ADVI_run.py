@@ -19,7 +19,6 @@ from visualization import (
 sns.set_style('whitegrid')
 plt.rcParams['figure.dpi'] = 100
 
-# %matplotlib inline
 # Load the WSEV dataset
 data_path = '/home/coder/data/updated_WSEV/260108_wsev_final_df.csv'
 df = load_wsev_data(data_path)
@@ -37,14 +36,7 @@ print(f"Diagnosis labels y: {y.shape}")
 print(f"Number of features: {len(feature_names)}")
 print(f"Diagnoses: {dx_labels}")
 
-# Optional: Split into train/test sets
-# For this example, we'll train on all data for better topic discovery
-# Uncomment below to use train/test split:
-
-# X_train, X_test, y_train, y_test = train_test_split_stratified(X, y, test_size=0.2)
-# X_model, y_model = X_train, y_train
-
-# For full dataset:
+# Use full dataset
 X_model, y_model = X, y
 
 # Initialize model
@@ -56,36 +48,37 @@ model = CoPathologySLDA(
 )
 
 print("Model initialized with 4 topics")
-print("\nNote: Sampling may take 5-15 minutes...")
-# Fit the model
-# For faster testing, reduce n_samples to 500 and chains to 2
-# For final analysis, use n_samples=2000 and chains=4
+print("\nUsing ADVI - this should take ~30-60 seconds...")
 
 model.fit(
     X_model, 
     y_model,
-    n_samples=2000,      # Number of MCMC samples per chain
-    tune=1000,           # Number of tuning/burn-in samples
-    chains=4,            # Number of parallel chains
-    target_accept=0.9    # Target acceptance rate for NUTS
+    inference='advi',
+    n_advi_iterations=10000,
+    n_samples=1000
 )
+
+# Plot ELBO convergence
+fig = model.plot_elbo(figsize=(12, 4), save_path='/home/coder/sLDA_co_pathology/figures/ADVI/advi_elbo.png')
+plt.show()
 # Get posterior means
 topic_patterns = model.get_topic_patterns()        # (n_topics, n_features)
 patient_mixtures = model.get_patient_mixtures()    # (n_patients, n_topics)
 diagnosis_weights = model.get_diagnosis_weights()  # (n_topics, n_classes)
 
-print(f"Topic patterns (β): {topic_patterns.shape}")
-print(f"Patient mixtures (θ): {patient_mixtures.shape}")
-print(f"Diagnosis weights (η): {diagnosis_weights.shape}")
+print(f"Topic patterns (beta): {topic_patterns.shape}")
+print(f"Patient mixtures (theta): {patient_mixtures.shape}")
+print(f"Diagnosis weights (eta): {diagnosis_weights.shape}")
 
 # Verify topic mixtures sum to 1
-print(f"\nPatient mixture sums (should be 1.0): {patient_mixtures[0].sum():.4f}")
+print(f"\nPatient mixture sums (should be ~1.0): {patient_mixtures[0].sum():.4f}")
+
 
 fig = plot_topic_heatmap(
     topic_patterns, 
     feature_names,
     figsize=(16, 6),
-    save_path='/home/coder/sLDA_co_pathology/figures/NUTS/topic_heatmap.png'
+    save_path='/home/coder/sLDA_co_pathology/figures/ADVI/topic_heatmap.png'
 )
 plt.show()
 
@@ -113,7 +106,7 @@ for topic_id in range(model.n_topics):
         feature_names,
         n_top_regions=12,
         figsize=(14, 5),
-        save_path=f'/home/coder/sLDA_co_pathology/figures/NUTS/topic_{topic_id}_brain_pattern.png'
+        save_path=f'/home/coder/sLDA_co_pathology/figures/ADVI/topic_{topic_id}_brain_pattern.png'
     )
     plt.show()
 
@@ -122,7 +115,7 @@ fig = plot_patient_topic_distribution(
     y_model,
     dx_labels,
     figsize=(14, 6),
-    save_path='/home/coder/sLDA_co_pathology/figures/NUTS/patient_topic_distribution.png'
+    save_path='/home/coder/sLDA_co_pathology/figures/ADVI/patient_topic_distribution.png'
 )
 plt.show()
 
@@ -130,7 +123,7 @@ fig = plot_topic_diagnosis_association(
     diagnosis_weights,
     dx_labels,
     figsize=(9, 6),
-    save_path='/home/coder/sLDA_co_pathology/figures/NUTS/topic_diagnosis_association.png'
+    save_path='/home/coder/sLDA_co_pathology/figures/ADVI/topic_diagnosis_association.png'
 )
 plt.show()
 # Interpret topic-diagnosis associations
@@ -158,7 +151,7 @@ topic_df = pd.DataFrame(
     index=feature_names,
     columns=[f'Topic_{i}' for i in range(model.n_topics)]
 )
-topic_df.to_csv('/home/coder/sLDA_co_pathology/results/NUTS/260109_topic_patterns.csv')
+topic_df.to_csv('/home/coder/sLDA_co_pathology/results/ADVI/260109_topic_patterns.csv')
 print("Saved topic patterns to topic_patterns.csv")
 
 # Save patient mixtures
@@ -174,5 +167,5 @@ dx_weights_df = pd.DataFrame(
     index=[f'Topic_{i}' for i in range(model.n_topics)],
     columns=dx_labels
 )
-dx_weights_df.to_csv('/home/coder/sLDA_co_pathology/results/NUTS/260109_topic_diagnosis_weights.csv')
+dx_weights_df.to_csv('/home/coder/sLDA_co_pathology/results/ADVI/260109_topic_diagnosis_weights.csv')
 print("Saved diagnosis weights to topic_diagnosis_weights.csv")

@@ -60,18 +60,23 @@ class CoPathologySLDA:
         # Will be set during fit
         self.trace_ = None
         self.model_ = None
+        self.approx_ = None  # For ADVI
+        self.inference_method_ = None
         self.n_patients_ = None
         self.n_features_ = None
         self.n_classes_ = None
 
+## ORIG #########################################################
     def fit(
         self,
         X: np.ndarray,
         y: np.ndarray,
+        inference: str = "mcmc",
         n_samples: int = 2000,
         tune: int = 1000,
         chains: int = 4,
         target_accept: float = 0.9,
+        n_advi_iterations: int = 30000,
         **kwargs
     ):
         """
@@ -83,16 +88,23 @@ class CoPathologySLDA:
             Regional atrophy values for each patient
         y : np.ndarray, shape (n_patients,)
             Integer-encoded diagnosis labels (0 to n_classes-1)
+        inference : str, default="mcmc"
+            Inference method: "mcmc" for NUTS sampling, "advi" for variational inference
+            - "mcmc": Full MCMC sampling (slower, exact posterior)
+            - "advi": Automatic Differentiation VI (faster, approximate posterior)
         n_samples : int, default=2000
-            Number of MCMC samples to draw per chain
+            Number of MCMC samples to draw per chain (for mcmc),
+            or number of samples to draw from approximate posterior (for advi)
         tune : int, default=1000
-            Number of tuning (burn-in) samples
+            Number of tuning (burn-in) samples (only for mcmc)
         chains : int, default=4
-            Number of parallel MCMC chains
+            Number of parallel MCMC chains (only for mcmc)
         target_accept : float, default=0.9
-            Target acceptance rate for NUTS sampler
+            Target acceptance rate for NUTS sampler (only for mcmc)
+        n_advi_iterations : int, default=30000
+            Number of optimization iterations for ADVI (only for advi)
         **kwargs
-            Additional arguments passed to pm.sample()
+            Additional arguments passed to pm.sample() or pm.fit()
 
         Returns
         -------
@@ -101,13 +113,22 @@ class CoPathologySLDA:
         """
         self.n_patients_, self.n_features_ = X.shape
         self.n_classes_ = len(np.unique(y))
+        self.inference_method_ = inference.lower()
+
+        if self.inference_method_ not in ["mcmc", "advi"]:
+            raise ValueError(f"inference must be 'mcmc' or 'advi', got '{inference}'")
 
         print(f"Fitting sLDA model:")
         print(f"  Patients: {self.n_patients_}")
         print(f"  Features: {self.n_features_}")
         print(f"  Topics: {self.n_topics}")
         print(f"  Diagnoses: {self.n_classes_}")
-        print(f"  Sampling: {n_samples} samples × {chains} chains")
+        if self.inference_method_ == "mcmc":
+            print(f"  Inference: MCMC (NUTS)")
+            print(f"  Sampling: {n_samples} samples × {chains} chains")
+        else:
+            print(f"  Inference: ADVI (Variational)")
+            print(f"  Iterations: {n_advi_iterations}, then {n_samples} samples")
 
         with pm.Model() as self.model_:
             # ---- Hyperpriors ----
@@ -177,22 +198,45 @@ class CoPathologySLDA:
                 observed=y
             )
 
-            # ---- MCMC Sampling ----
-            print("\nStarting MCMC sampling...")
-            self.trace_ = pm.sample(
-                draws=n_samples,
-                tune=tune,
-                chains=chains,
-                target_accept=target_accept,
-                random_seed=self.random_state,
-                return_inferencedata=True,
-                **kwargs
-            )
+            # ---- Inference ----
+            if self.inference_method_ == "mcmc":
+                print("\nStarting MCMC sampling...")
+                self.trace_ = pm.sample(
+                    draws=n_samples,
+                    tune=tune,
+                    chains=chains,
+                    target_accept=target_accept,
+                    random_seed=self.random_state,
+                    return_inferencedata=True,
+                    **kwargs
+                )
+                print("\nSampling complete!")
+                self._print_convergence_diagnostics()
+            else:
+                # ADVI - Automatic Differentiation Variational Inference
+                print("\nStarting ADVI optimization...")
+                self.approx_ = pm.fit(
+                    n=n_advi_iterations,
+                    method="advi",
+                    random_seed=self.random_state,
+                    **kwargs
+                )
+                print(f"\nADVI optimization complete! Final ELBO: {self.approx_.hist[-1]:.2f}")
 
-        print("\nSampling complete!")
-        self._print_convergence_diagnostics()
+                # Sample from the approximate posterior
+                print(f"Drawing {n_samples} samples from approximate posterior...")
+                self.trace_ = self.approx_.sample(n_samples)
+
+                # Convert to InferenceData format for consistency
+                import arviz as az
+                self.trace_ = az.from_pymc3(self.trace_)
+
+                self._print_advi_diagnostics()
 
         return self
+###############################################################################################
+
+
 
     def _print_convergence_diagnostics(self):
         """Print convergence diagnostics for key parameters."""
@@ -209,9 +253,67 @@ class CoPathologySLDA:
                 mean_rhat = np.mean(rhat_vals)
                 print(f"  {var}: mean={mean_rhat:.4f}, max={max_rhat:.4f}", end="")
                 if max_rhat > 1.01:
-                    print(" ⚠ Warning: Poor convergence")
+                    print(" (Warning: Poor convergence)")
                 else:
-                    print(" ✓")
+                    print(" (OK)")
+
+    def _print_advi_diagnostics(self):
+        """Print diagnostics for ADVI inference."""
+        print("\nADVI Diagnostics:")
+
+        # Check ELBO convergence
+        elbo_history = self.approx_.hist
+        final_elbo = elbo_history[-1]
+        elbo_change = elbo_history[-1] - elbo_history[-100] if len(elbo_history) >= 100 else 0
+
+        print(f"  Final ELBO: {final_elbo:.2f}")
+        print(f"  ELBO change (last 100 iters): {elbo_change:.2f}")
+
+        if abs(elbo_change) > 10:
+            print("  (Warning: ELBO may not have converged - consider more iterations)")
+        else:
+            print("  (OK - ELBO appears stable)")
+
+        # Print parameter summary
+        print("\nParameter estimates (posterior mean +/- std):")
+        for var in ["beta", "theta", "eta", "sigma_x"]:
+            if var in self.trace_.posterior:
+                vals = self.trace_.posterior[var].values.flatten()
+                print(f"  {var}: mean={np.mean(vals):.4f}, std={np.std(vals):.4f}")
+
+    def plot_elbo(self, figsize=(10, 4), save_path=None):
+        """
+        Plot ELBO convergence for ADVI inference.
+
+        Parameters
+        ----------
+        figsize : tuple, default=(10, 4)
+            Figure size
+        save_path : str, optional
+            Path to save the figure
+
+        Returns
+        -------
+        fig : matplotlib.figure.Figure
+            The figure object
+        """
+        if self.approx_ is None:
+            raise ValueError("ELBO plot only available for ADVI inference. "
+                           "Fit the model with inference='advi' first.")
+
+        import matplotlib.pyplot as plt
+
+        fig, ax = plt.subplots(figsize=figsize)
+        ax.plot(self.approx_.hist, alpha=0.8)
+        ax.set_xlabel("Iteration")
+        ax.set_ylabel("ELBO")
+        ax.set_title("ADVI Convergence (Evidence Lower Bound)")
+        ax.grid(True, alpha=0.3)
+
+        if save_path:
+            fig.savefig(save_path, dpi=150, bbox_inches='tight')
+
+        return fig
 
     def get_topic_patterns(self):
         """
