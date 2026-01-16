@@ -32,6 +32,8 @@ print(df['DX'].value_counts())
 # Prepare data for sLDA
 X, y, feature_names, dx_labels = prepare_slda_inputs(df, standardize=False)
 
+print(X)
+print(feature_names)
 print(f"\nFeature matrix X: {X.shape}")
 print(f"Diagnosis labels y: {y.shape}")
 print(f"Number of features: {len(feature_names)}")
@@ -49,7 +51,7 @@ X_model, y_model = X, y
 
 # Initialize model
 model = CoPathologySLDA(
-    n_topics=4,           # Number of latent pathology patterns
+    n_topics=6,           # Number of latent pathology patterns
     alpha_prior=1.0,      # Dirichlet concentration (1.0 = uniform)
     feature_prior_std=1.0, # Prior std for topic-region weights
     random_state=42

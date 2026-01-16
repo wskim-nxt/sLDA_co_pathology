@@ -26,7 +26,7 @@ def load_wsev_data(csv_path: str):
         Loaded dataframe with all patient information
     """
     df = pd.read_csv(csv_path)
-    df = df[df['DX'] != 'HC'] # (260109) WSK remove healthy controls - applies to  WSEV dataset only 
+    # df = df[df['DX'] != 'HC'] # (260109) WSK remove healthy controls - applies to  WSEV dataset only 
     print(f"Loaded {len(df)} patients from {csv_path}")
     print(f"Columns: {df.shape[1]}")
     return df
@@ -136,9 +136,25 @@ def prepare_slda_inputs(
     """
     # Extract features
     # X_df, feature_names = extract_cortical_features(df)# (260109) temporarily blocked for using all VA values
-    X_df  = df.loc[:, 'Left_Cerebral_White_Matter':'ctx_rh_insula']
-    feature_names = X_df.columns.tolist()
-    X = X_df.values
+    hc_df = df[df['DX'] == 'HC']
+    df = df[df['DX'] != 'HC']
+
+    region_cols = df.loc[:, 'ctx_lh_caudalanteriorcingulate':'ctx_rh_insula'].columns
+
+    X_hc = hc_df[region_cols].values.astype(float)
+    X_pat = df[region_cols].values.astype(float)
+    print(f"HC: {X_hc.shape[0]} subjects")
+    print(f"Patients: {X_pat.shape[0]} subjects")  
+    hc_mean = X_hc.mean(axis=0, keepdims=True)
+    hc_std  = X_hc.std(axis=0, keepdims=True) + 1e-8  # avoid divide-by-zero
+
+    Z = (X_pat - hc_mean) / hc_std
+    X_df = np.maximum(-Z, 0.0)
+
+    # X_df  = df.loc[:, 'ctx_lh_caudalanteriorcingulate':'ctx_rh_insula']
+    feature_names = region_cols.tolist()
+
+    X = X_df
 
     # Encode diagnoses
     y, dx_labels, _ = encode_diagnoses(df)

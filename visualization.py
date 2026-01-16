@@ -464,7 +464,7 @@ def plot_topic_composition_radar(
     n_top_regions: int = 15,
     figsize: Tuple[int, int] = (14, 10),
     save_path: Optional[str] = None
-) -> plt.Figure:
+):
     """
     Plot radar/spider charts showing topic composition by brain regions.
 

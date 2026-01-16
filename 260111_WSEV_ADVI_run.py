@@ -31,6 +31,8 @@ print(df['DX'].value_counts())
 # Prepare data for sLDA
 X, y, feature_names, dx_labels = prepare_slda_inputs(df, standardize=False)
 
+print(X)
+print(feature_names)
 print(f"\nFeature matrix X: {X.shape}")
 print(f"Diagnosis labels y: {y.shape}")
 print(f"Number of features: {len(feature_names)}")
@@ -41,7 +43,7 @@ X_model, y_model = X, y
 
 # Initialize model
 model = CoPathologySLDA(
-    n_topics=4,           # Number of latent pathology patterns
+    n_topics=6,           # Number of latent pathology patterns
     alpha_prior=1.0,      # Dirichlet concentration (1.0 = uniform)
     feature_prior_std=1.0, # Prior std for topic-region weights
     random_state=42
@@ -50,12 +52,13 @@ model = CoPathologySLDA(
 print("Model initialized with 4 topics")
 print("\nUsing ADVI - this should take ~30-60 seconds...")
 
+# Fit the model using ADVI
 model.fit(
     X_model, 
     y_model,
-    inference='advi',
-    n_advi_iterations=10000,
-    n_samples=1000
+    inference='advi',        # Use variational inference
+    n_advi_iterations=10000, # Optimization iterations
+    n_samples=1000           # Samples from approximate posterior
 )
 
 # Plot ELBO convergence
@@ -151,7 +154,7 @@ topic_df = pd.DataFrame(
     index=feature_names,
     columns=[f'Topic_{i}' for i in range(model.n_topics)]
 )
-topic_df.to_csv('/home/coder/sLDA_co_pathology/results/ADVI/260109_topic_patterns.csv')
+topic_df.to_csv('/home/coder/sLDA_co_pathology/results/ADVI/260112_topic_patterns.csv')
 print("Saved topic patterns to topic_patterns.csv")
 
 # Save patient mixtures
@@ -167,5 +170,27 @@ dx_weights_df = pd.DataFrame(
     index=[f'Topic_{i}' for i in range(model.n_topics)],
     columns=dx_labels
 )
-dx_weights_df.to_csv('/home/coder/sLDA_co_pathology/results/ADVI/260109_topic_diagnosis_weights.csv')
+dx_weights_df.to_csv('/home/coder/sLDA_co_pathology/results/ADVI/260112_topic_diagnosis_weights.csv')
 print("Saved diagnosis weights to topic_diagnosis_weights.csv")
+
+# -------------------------------
+# Create Diagnosis x Topic CSV (average topic expression per diagnosis)
+# -------------------------------
+
+# Create a DataFrame with patient topic mixtures and diagnosis
+patient_topic_df = pd.DataFrame(
+    patient_mixtures,
+    columns=[f'Topic_{i}' for i in range(model.n_topics)]
+)
+patient_topic_df['Diagnosis'] = [dx_labels[i] for i in y_model]
+
+# Group by Diagnosis and compute mean topic mixture
+dx_topic_df = patient_topic_df.groupby('Diagnosis').mean()
+
+# Optional: convert to percentages (each row sums to 100%)
+dx_topic_percent_df = dx_topic_df.div(dx_topic_df.sum(axis=1), axis=0) * 100
+
+# Save to CSV
+dx_topic_csv_path = '/home/coder/sLDA_co_pathology/results/ADVI/260112_dx_topic_percent.csv'
+dx_topic_percent_df.to_csv(dx_topic_csv_path)
+print(f"Saved Diagnosis x Topic CSV to {dx_topic_csv_path}")
